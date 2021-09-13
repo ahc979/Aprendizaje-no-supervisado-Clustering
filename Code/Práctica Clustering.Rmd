@@ -1,0 +1,239 @@
+---
+title: "Práctica Clustering"
+author: "Alvaro Herreruela"
+date: "13/2/2021"
+output: html_document
+---
+
+```{r ,include=FALSE, warning=FALSE}
+library(corrplot)
+library(knitr)
+library(fmsb)
+library(sqldf)
+library(vegan)
+library(cluster)
+library(dplyr)
+library(leaflet)
+census <- read.csv('C:/Users/aherreruela/Desktop/Master/Clustering/materialsesionesdeclustering/census2000_conLongitudLatitud.csv', sep = ',', dec = '.')
+```
+
+## Primera toma de contacto
+
+Haciendo un resumen de los datos, lo primero que he podido observar es que hay presencia de variables categóricas y numéricas. Haciendo una segunda observación de mi dataframe, he observado que la poblacion y el nivel medio de ingresos son variables numéricas pero r las está tomando como categóricas por el separador decimal. He procedido ha hacer algunos ajustes para dejar los datos bien ordenados.
+
+Una vez hecho esto, he procedido a analizar la posible presencia de nas, ouliers y colinealidad. He observado que las variables de densidad de población y nivel de ingresos, tenían nas. Además, todas las variables menos densidad de población, tienen presencia de outliers, siendo normal el este tipo de datasets donde hay muchos registros y mucha variedad dentro de la población (lo que quiero decir es que quitando algún ouliers, el resto de outliers pueden tener sentido). Por último, haciendo un gráfico de correlación he observado que ninguna de las variables están colineadas, aunque existe una relación fuerte entre densidad de población y población. Esto es normal ya que al final la densidad de población es la población/metros_cuadrados, pero para poder afirmar que hay colinealidad tendría que tener otra variable que me indicase los metros cuadrados ya que la densidad no es una transformación de la variable poblacion en sí misma sino que necesita una variable externa(en este caso, metros cuadrados).
+
+```{r,echo=FALSE, include=FALSE}
+#nas en regdens, presencia de outliers, no hay colinealidad
+summary(census)
+str(census)
+census$RegPop <- gsub(',','',census$RegPop)
+census$RegPop <- sapply(census$RegPop,as.numeric)
+census$MedHHInc <-  gsub('[^1-9]','',census$MedHHInc)
+census$MedHHInc <- sapply(census$MedHHInc,as.numeric)
+```
+
+```{r}
+head(census)
+summary(census)
+boxplot(census$RegDens)
+boxplot(census$MeanHHSz)
+boxplot(census$RegPop)
+boxplot(census$MeanHHSz)
+
+census_final <- census[,c(4,5,6,7)]
+corrplot(cor(census_final,use="pairwise.complete.obs"))
+```
+
+## Prepocesamiento
+
+Ya conciendo nuestros datos, he procedido a tratarlos. Uno de los factores que hay que tener en cuenta es la estandarización, ya que en este dataset, he decidido que los datos tienen que estar en la misma unidad de medida sin dar peso a aquellos con valores más altos. Para la estandarización y los pasos posteriores he utilizado un nuevo dataframe sin el ID, el LocX y el LocY. Una vez estandarizado los datos, he imputado los Nas asignándoles un 0. Para reducir el impacto de los ouliers, he hecho el logaritmo de cada una de las variables y le he asigado una variable nueva dentro de mi dataset. Para que no se me quedasen valores negativos o ceros en el logaritmo, he restado a cada variable por su mínimo y le he sumado 1
+```{r}
+#estandarizar y eliminar presencia de ouliers
+census_final.scale <- as.data.frame(scale(census_final))
+summary(census_final.scale)
+census_final.scale$MedHHInc[is.na(census_final.scale$MedHHInc)]<-0
+census_final.scale$RegDens [is.na(census_final.scale$RegDens)]<-0
+
+census_final.scale$RegDens_log <- log(census_final.scale$RegDens -min(census_final.scale$RegDens)+1)
+census_final.scale$RegPop_log <- log(census_final.scale$RegPop -min(census_final.scale$RegPop)+1)
+census_final.scale$MedHHInc_log <- log(census_final.scale$MedHHInc -min(census_final.scale$MedHHInc)+1)
+census_final.scale$MeanHHSz_log <- log(census_final.scale$MeanHHSz  -min(census_final.scale$MeanHHSz )+1)
+```
+
+````{r}
+summary(census_final.scale)
+````
+
+## Clustering Jerárquico
+Este método es computacionalmente más caro que los de optimización ya que va iterando cada dato calculando su distancia(a través de un enlace que suele ser el enlace promedio que es la distancia promedia entre un dato y otro) con respecto al resto de datos y asignándoles un cluster. Una vez que se realiza este cluster, para el siguiente dato, se calcula la distancia con respecto al cluster creado y al resto de datos.
+
+Para realizar el clustering jerarárquico es necesario utilizar una muestra de nuestro dataset ya que el número de observaciones es muy grande lo que hace que haya mucho coste computacional. He cogido un 40% de los datos, lo que representa alrededor de 13.000 observaciones. Es una muestra bastante generosa, lo que hará que nuestro modelo prediga mejor los cluters. Una vez recogida la muestra, he creado la matriz de correlaciones utilizando la distancia euclidea ya que me parece la métrica más recurrente en este tipo de problemas.  Por último he creado el modelo con el enlace Ward ya que al ver tratado los outliers es el método más eficiente, y lo he graficado utilizando diferentes números de cluster. En un primer momento parece que el valor de la métrica se reduce mucho a medida que creo más clusters pero cerca del cluster 10 vemos que ya no se reduce tanto, por eso, al final decido quedarme con 10.
+```{r, echo=FALSE}
+
+set.seed(28945)
+indexes = sample(1:nrow(census_final.scale), size=0.4*nrow(census_final.scale))
+census_final.scale_muestra <- census_final.scale[indexes,] 
+
+matrizDistancias <- vegdist(census_final.scale_muestra[,5:8], method = "euclidean")
+clusterJerarquico <- hclust(matrizDistancias, method="ward.D2") 
+
+```
+
+```{r, echo=FALSE}
+
+{plot(clusterJerarquico, labels = FALSE, main = "Dendrograma")
+
+  rect.hclust(clusterJerarquico, k=2, border="red") 
+  rect.hclust(clusterJerarquico, k=3, border="blue") 
+  rect.hclust(clusterJerarquico, k=4, border="green") 
+  rect.hclust(clusterJerarquico, k=5, border="yellow") 
+  rect.hclust(clusterJerarquico, k=6, border="purple") 
+  rect.hclust(clusterJerarquico, k=7, border="gray") 
+  rect.hclust(clusterJerarquico, k=8, border="black")
+  rect.hclust(clusterJerarquico, k=10, border="orange")}
+```
+
+```{r, echo=FALSE}
+
+Asignacion<- cbind(census_final.scale_muestra[,5:8], cutree(clusterJerarquico, k=10))
+colnames(Asignacion)[5] <- 'cluster'
+
+```
+
+```{r, echo=FALSE}
+#primero y septimo desnivelados en cuanto a tamaño
+#tamaño de la unidad familiar del primer = 0
+#noveno densidad pequeña
+
+
+centroidesJerarquico<-  sqldf("Select cluster, 
+                        count(*) as tamanyoCluster,
+                        avg(RegDens_log) as RegDens_log,
+                        avg(RegPop_log) as RegPop_log,
+                        avg(MedHHInc_log) as MedHHInc_log,
+                        avg(MeanHHSz_log) as MeanHHSz_log
+                        from Asignacion
+                        group by cluster")
+
+
+```
+
+Haciendo un análisis a los centroides, podemos observar como el primer y el séptimo cluster estan más desnivelados que el resto ya que tienen un tamaño menor, el tamaño de la unidad familiar del primero es 0 (eso es un poco extraño) y el noveno guarda una densidad muy pequeña
+
+```{r, echo=FALSE}
+print(centroidesJerarquico)
+```
+
+## Clustering de Optimización (K-Means)
+A continuación, con los centroides obtenidos en el clustering jerárquico, procedemos a utilizarlos en nuestro modelo k-means. Los clustering de optimización tienen menos coste computacional ya que te asigna los centroides de manera aleatoria y te construye los grupos en función de la distancia de los datos a esos centroides iterando, para cada vez ir reduciendo más la distancia entregrupo y aumentar más la distancia intragrupo. Son más representativos ya que al no tener casi coste computacional puedes utilizar la población entera y no una muestra como en el jerárquico. Aún así, si combinas ambos modelos, sacando el número de centroides del jerárquico y metiéndolo en el de optimización, mejora ya que mi modelo de optimización no parte de unos clusters aleatorios sino que se los doy yo. Eso es lo que estamos intentando conseguir aquí. Otra de las cosas a tener en cuenta es que, al utilizar el set de datos al completo, el tamaño de cada cluster es más alto, por lo que están mejor compensados.
+
+Una vez que creamos nuestro modelo k-means, representamos los centroides en un gráfico de radar. Podemos observar la figura verde que representa la media de datos y la roja represnta los datos del cluster con respecto a las variables. Omitiendo las tres primeras gráficas (no pertenecen a los clusters), podemos observar los diferentes clusters que se han creado con el modelo k-means:
+
+1) Fancy-Store: el primer gráfico lo he denominado 'tienda elegante/de lujo' porque podemos observar que la población es muy pequeña y la densidad muy grande (pocas pesonas concentradas en un territorio pequeño), la media de personas por familia es muy pequeña lo que puede estar indicando que probablemente no son familias sino indiviudos y además el nivel medio de ingresos es alto. Por lo tanto, se necesitará una tienda pequeña pero que el nivel de precios sea alto. 
+
+2) Small-mall: el siguiente cluster lo he denominado 'pequeño centro comercial' ya que la densidad de población y la población están por debajo de la media mientras que los ingresos medios y la media de ingresos de las familias es alta, lo que hace que un pequeño centro comercial sea lo más adecuado.
+
+3) Multimarca: las tiendas multimarca son pequeños establecimientos de barrio. Este cluster tiene un ingreso medio, población y densidad muy bajos pero en cambio las familias son grandes, por lo que necesitaran una tienda para comprar cosas pero no algo tan grande como un centro comercial
+
+4) Pop-up stores: los pop-up stores son tiendas grandes que las marcas utilizan para promocionarse en las grandes ciudades. Al tener todas las variables por encima de la media, es lo más adecuado para las grandes marcas ya que van a aprovechar al máximo su presencia.
+
+5) Mercadillo : como la densidad de la población es alta, siendo la población pequeña con un nivel de ingresos bajo y un tamaño familiar grande, lo mas adecuado es poner un centro que no sea muy caro y que abarque toda la población concentrada en un lugar.
+
+6) Fancy-Mall: también traducido a 'centro comercial elegante/ de lujo' puede ser una gran alternativa a este cluster ya que existe un gran número de personas, con un número de familiares alto y un nivel de ingresos alto.
+
+7) Small-shop: una tienda pequeña para un cluster donde destaca por tener todas las variables extremadamente bajas menos el numero de personas por familia, es lo más adecuado
+
+8) Super-mall: 'centro comercial gigante' se refiere a un centro comercial de unas dimensiones mucho más grandes de lo que puede ser un centro comercial normal. Esto se debe a que todas las variables presentan indices altísimo (incluso la variable población es más grande que en el cluster 4)
+
+9) Fancy-boutique: 'tienda pequeña elegante/de lujo' puede ser una alternativa a este cluster donde el nivel de ingreso y media de personas por familia es muy alta y tanto la densidad como la población no lo son.
+
+10) Outlet: un outlet es un establecimiento grande donde las cosas están rebajadas de precio. He decidido que era adecuado para este cluster por el bajo nivel de ingresos pero el alto porcentaje en el resto de variables
+
+
+```{r, echo=FALSE}
+
+kmeans <- kmeans(census_final.scale[,5:8],centers=centroidesJerarquico[,3:6])
+asignacionoptima <- cbind(census_final.scale[,5:8],kmeans$cluster)
+colnames(asignacionoptima)[5] <- 'cluster'
+centroidesOptimizacion <- kmeans$centers
+tamanyoClusters<-sqldf("Select cluster, count(*) as tamayoCluster from asignacionoptima Group by cluster")
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+centroidesOptimizacionParaRadar<-rbind(
+  rep(1,10) , 
+  rep(0,10) , 
+  apply(centroidesOptimizacion, 2, mean),
+  centroidesOptimizacion)
+
+colors_border=c( rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9) )
+colors_in=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) )
+```
+
+```{r, echo=FALSE}
+
+for (i in 1:nrow(centroidesOptimizacionParaRadar)-3)
+{
+  tamanyo<-tamanyoClusters[i,2]
+  
+  radarchart( as.data.frame(centroidesOptimizacionParaRadar[c(1:3,3+i),])  , axistype=1 , 
+              #custom polygon
+              pcol=colors_border , pfcol=colors_in , plwd=4 , plty=1,
+              #custom the grid
+              cglcol="grey", cglty=1, axislabcol="grey", caxislabels=seq(0,1,5), cglwd=0.8,
+              #custom labels
+              vlcex=0.8,
+              title=paste0("Tama?o:",tamanyo)
+  )
+}
+```
+
+```{r, echo=FALSE}
+
+clustersuper <- c('fancy-store','small-mall','multimarca', 'pop-up stores', 'mercadillo', 'fancy-mall', 'small-shop', 'super-mall','fancy-boutique', 'outlet')
+centroidesOptimizacion_clustersuper <- cbind(centroidesOptimizacion,clustersuper)
+
+print(centroidesOptimizacion_clustersuper)
+
+````
+## Mapa Cluster
+Podemos observar que las coordenadas representan el mapa de Estados Unidos. Si nos fijamos en el interior del territorio, podemos observar que en la zona central- norte y central-sur predomina la 'fancy-boutique' y a medida que nos movemos hacia el este y oeste empiezan a aparecer establecimientos más grandes. Esto se puede da porque los estados del centro-norte y centro-sur (Arizona, Texas, Minesota...) tienen menos población que los estados que se encuentran a los extremos de este y oeste (Nueva York, Florida, Califronia,Washington... ).
+````{r, echo=FALSE}
+
+asignacionoptima[asignacionoptima$cluster == 1,5] <- 'fancy-store'
+asignacionoptima[asignacionoptima$cluster == 2,5] <- 'small-mall'
+asignacionoptima[asignacionoptima$cluster == 3,5] <- 'multimarca'
+asignacionoptima[asignacionoptima$cluster == 4,5] <- 'pop-up stores'
+asignacionoptima[asignacionoptima$cluster == 5,5] <- 'mercadillo'
+asignacionoptima[asignacionoptima$cluster == 6,5] <- 'fancy-mall'
+asignacionoptima[asignacionoptima$cluster == 7,5] <- 'small-shop'
+asignacionoptima[asignacionoptima$cluster == 8,5] <- 'super-mall'
+asignacionoptima[asignacionoptima$cluster == 9,5] <- 'fancy-boutique'
+asignacionoptima[asignacionoptima$cluster == 10,5] <- 'outlet'
+
+
+visualizacion <- asignacionoptima[,5]
+visualizacion <- cbind(census,visualizacion)
+colnames(visualizacion)[8] <- 'cluster'
+
+pal <- colorFactor( palette = "Paired",
+                    domain =asignacionoptima$cluster )
+
+popup <- paste0('<b>Poblacion:</b> ', as.character(visualizacion$RegPop), '<br>',
+                '<b>Ingresos medios:</b>', as.character(visualizacion$MedHHInc))
+
+leaflet(data = visualizacion) %>% 
+  addTiles(urlTemplate = 'http://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png') %>%
+  addCircleMarkers(~LocX, ~LocY, 
+             popup = ~ popup,
+             color = ~pal(cluster), fill = T, fillOpacity = 1, weight = 0, radius = 0.4
+            )%>% 
+  addLegend("bottomright", pal = pal, values = ~cluster,
+            title = "Cluster",
+            opacity = 1
+  ) 
+
+````
+
